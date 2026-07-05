@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build-assets:
+    name: Build assets for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bin_name: demo
+          - os: macos-latest
+            bin_name: demo
+          - os: windows-latest
+            bin_name: demo.exe
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Install UPX (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y upx-ucl
+
+      - name: Install UPX (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install upx
+
+      - name: Install UPX (Windows)
+        if: matrix.os == 'windows-latest'
+        run: choco install upx
+
+      - name: Build and compress (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: ./scripts/build.sh --release --upx
+
+      - name: Build and compress (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: ./scripts/build.sh --release --upx
+
+      - name: Package assets (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p dist-assets bundle
+          cp zig-out/lib/libinvima_ffi.so bundle/
+          cp zig-out/bin/demo bundle/
+          tar czf dist-assets/invima-validator-linux-amd64.tar.gz -C bundle .
+          cp zig-out/lib/libinvima_ffi.so dist-assets/libinvima_ffi.so
+          cp zig-out/bin/demo dist-assets/demo
+
+      - name: Package assets (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          mkdir -p dist-assets bundle
+          cp zig-out/lib/libinvima_ffi.dylib bundle/
+          cp zig-out/bin/demo bundle/
+          tar czf dist-assets/invima-validator-macos-universal.tar.gz -C bundle .
+          cp zig-out/lib/libinvima_ffi.dylib dist-assets/libinvima_ffi.dylib
+          cp zig-out/bin/demo dist-assets/demo
+
+      - name: Package assets (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p dist-assets bundle
+          cp zig-out/bin/invima_ffi.dll bundle/
+          cp zig-out/lib/invima_ffi.lib bundle/
+          cp zig-out/bin/demo.exe bundle/
+          powershell -Command "Compress-Archive -Path bundle/* -DestinationPath dist-assets/invima-validator-windows-amd64.zip"
+          cp zig-out/bin/invima_ffi.dll dist-assets/invima_ffi.dll
+          cp zig-out/lib/invima_ffi.lib dist-assets/invima_ffi.lib
+          cp zig-out/bin/demo.exe dist-assets/demo.exe
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: assets-${{ matrix.os }}
+          path: dist-assets/*
+
+  publish-release:
+    name: Create GitHub Release
+    needs: [build-assets]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts structure
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f -exec cp {} release-assets/ \;
+          ls -la release-assets
+
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            echo "Release ${{ github.ref_name }} already exists. Skipping creation."
+          else
+            gh release create ${{ github.ref_name }} release-assets/* \
+              --title "${{ github.ref_name }}" \
+              --generate-notes
+          fi
