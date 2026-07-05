@@ -67,7 +67,7 @@ if [[ "$USE_UPX" == true ]]; then
 
     for FILE in "${FILES_TO_PACK[@]}"; do
         if [[ -f "$FILE" ]]; then
-            upx $UPX_FLAGS "$FILE"
+            upx $UPX_FLAGS "$FILE" || echo "Warning: UPX could not pack $FILE, skipping..."
         fi
     done
 fi
