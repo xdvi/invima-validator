@@ -52,12 +52,24 @@ zig build -Doptimize="${OPTIMIZE}"
 
 if [[ "$USE_UPX" == true ]]; then
     echo "Compressing binaries using UPX..."
-    if [[ -f "zig-out/lib/libinvima_ffi.so" ]]; then
-        upx --best "zig-out/lib/libinvima_ffi.so"
+    UPX_FLAGS="--best"
+    if [[ "$(uname)" == "Darwin" ]]; then
+        UPX_FLAGS="--best --force-macos"
     fi
-    if [[ -f "zig-out/bin/demo" ]]; then
-        upx --best "zig-out/bin/demo"
-    fi
+
+    declare -a FILES_TO_PACK=(
+        "zig-out/lib/libinvima_ffi.so"
+        "zig-out/lib/libinvima_ffi.dylib"
+        "zig-out/bin/invima_ffi.dll"
+        "zig-out/bin/demo"
+        "zig-out/bin/demo.exe"
+    )
+
+    for FILE in "${FILES_TO_PACK[@]}"; do
+        if [[ -f "$FILE" ]]; then
+            upx $UPX_FLAGS "$FILE"
+        fi
+    done
 fi
 
 echo "Build finished successfully. Output in 'zig-out/'."
