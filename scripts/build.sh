@@ -55,9 +55,6 @@ if [[ "$(uname)" == "Linux" ]]; then
     if [[ -f "zig-out/lib/libinvima_ffi.so" ]]; then
         strip --remove-section=.comment --remove-section=.note.gnu.build-id "zig-out/lib/libinvima_ffi.so" || true
     fi
-    if [[ -f "zig-out/bin/demo" ]]; then
-        strip --remove-section=.comment --remove-section=.note.gnu.build-id "zig-out/bin/demo" || true
-    fi
 fi
 
 if [[ "$USE_UPX" == true ]]; then
@@ -71,8 +68,6 @@ if [[ "$USE_UPX" == true ]]; then
         "zig-out/lib/libinvima_ffi.so"
         "zig-out/lib/libinvima_ffi.dylib"
         "zig-out/bin/invima_ffi.dll"
-        "zig-out/bin/demo"
-        "zig-out/bin/demo.exe"
     )
 
     for FILE in "${FILES_TO_PACK[@]}"; do

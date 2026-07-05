@@ -16,11 +16,8 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            bin_name: demo
           - os: macos-latest
-            bin_name: demo
           - os: windows-latest
-            bin_name: demo.exe
 
     steps:
       - name: Checkout repository
@@ -57,20 +54,16 @@ jobs:
         run: |
           mkdir -p dist-assets bundle
           cp zig-out/lib/libinvima_ffi.so bundle/
-          cp zig-out/bin/demo bundle/
           tar czf dist-assets/invima-validator-linux-amd64.tar.gz -C bundle .
           cp zig-out/lib/libinvima_ffi.so dist-assets/libinvima_ffi.so
-          cp zig-out/bin/demo dist-assets/demo
 
       - name: Package assets (macOS)
         if: matrix.os == 'macos-latest'
         run: |
           mkdir -p dist-assets bundle
           cp zig-out/lib/libinvima_ffi.dylib bundle/
-          cp zig-out/bin/demo bundle/
           tar czf dist-assets/invima-validator-macos-universal.tar.gz -C bundle .
           cp zig-out/lib/libinvima_ffi.dylib dist-assets/libinvima_ffi.dylib
-          cp zig-out/bin/demo dist-assets/demo
 
       - name: Package assets (Windows)
         if: matrix.os == 'windows-latest'
@@ -79,11 +72,9 @@ jobs:
           mkdir -p dist-assets bundle
           cp zig-out/bin/invima_ffi.dll bundle/
           cp zig-out/lib/invima_ffi.lib bundle/
-          cp zig-out/bin/demo.exe bundle/
           powershell -Command "Compress-Archive -Path bundle/* -DestinationPath dist-assets/invima-validator-windows-amd64.zip"
           cp zig-out/bin/invima_ffi.dll dist-assets/invima_ffi.dll
           cp zig-out/lib/invima_ffi.lib dist-assets/invima_ffi.lib
-          cp zig-out/bin/demo.exe dist-assets/demo.exe
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

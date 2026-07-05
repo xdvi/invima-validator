@@ -21,6 +21,8 @@ jobs:
       - name: Build Debug
         run: |
           zig build
+          cp zig-out/lib/libinvima_ffi.so examples/
+          python examples/demo.py
 
       - name: Build Release (with UPX)
         run: |
