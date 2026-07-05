@@ -50,6 +50,16 @@ fi
 echo "Starting build (Mode: ${OPTIMIZE})..."
 zig build -Doptimize="${OPTIMIZE}"
 
+if [[ "$(uname)" == "Linux" ]]; then
+    echo "Stripping useless ELF sections (.comment, .note.gnu.build-id)..."
+    if [[ -f "zig-out/lib/libinvima_ffi.so" ]]; then
+        strip --remove-section=.comment --remove-section=.note.gnu.build-id "zig-out/lib/libinvima_ffi.so" || true
+    fi
+    if [[ -f "zig-out/bin/demo" ]]; then
+        strip --remove-section=.comment --remove-section=.note.gnu.build-id "zig-out/bin/demo" || true
+    fi
+fi
+
 if [[ "$USE_UPX" == true ]]; then
     echo "Compressing binaries using UPX..."
     UPX_FLAGS="--best"
