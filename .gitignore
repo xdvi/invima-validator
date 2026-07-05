@@ -1,2 +1,5 @@
 .zig-cache/
 zig-out/
+examples/*.so
+examples/*.dylib
+examples/*.dll
