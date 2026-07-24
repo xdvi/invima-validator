@@ -28,3 +28,15 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y upx-ucl
           ./scripts/build.sh --release --upx
+
+      # Regression guard for the class of bug fixed in build.zig: CI runners
+      # may have a newer CPU (VAES/AVX-512) than real deployment targets
+      # (e.g. Cascade Lake Xeons), so a binary that merely runs *here* proves
+      # nothing about portability. QEMU user-mode emulates an older baseline
+      # CPU on the same host arch — an illegal instruction shows up as a
+      # SIGILL here instead of in production.
+      - name: Smoke test under baseline-CPU emulation (Nehalem, no AVX)
+        run: |
+          sudo apt-get install -y qemu-user
+          cp zig-out/lib/libinvima_ffi.so examples/
+          qemu-x86_64 -cpu Nehalem "$(command -v python3)" examples/demo.py
