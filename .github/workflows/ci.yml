@@ -18,28 +18,57 @@ jobs:
         with:
           version: 0.16.0
 
+      - name: Check formatting
+        run: zig fmt --check .
+
       - name: Run Unit Tests
         run: zig build test
-
-      - name: Run Demo
-        run: |
-          zig build
-          cp zig-out/lib/libinvima_ffi.so examples/
-          python examples/demo.py
 
       - name: Build Release (with UPX)
         run: |
           sudo apt-get update && sudo apt-get install -y upx-ucl
           ./scripts/build.sh --release --upx
 
-      # Regression guard for the class of bug fixed in build.zig: CI runners
-      # may have a newer CPU (VAES/AVX-512) than real deployment targets
-      # (e.g. Cascade Lake Xeons), so a binary that merely runs *here* proves
-      # nothing about portability. QEMU user-mode emulates an older baseline
-      # CPU on the same host arch — an illegal instruction shows up as a
-      # SIGILL here instead of in production.
+      # Emulates an older baseline CPU: an instruction the runner supports but
+      # deployment hosts lack (e.g. VAES) surfaces as SIGILL here, not in prod.
       - name: Smoke test under baseline-CPU emulation (Nehalem, no AVX)
         run: |
           sudo apt-get install -y qemu-user
+          cp zig-out/lib/libinvima_ffi.so examples/
+          qemu-x86_64 -cpu Nehalem "$(command -v python3)" examples/demo.py --offline
+
+      # Same emulation over the TLS/HTTP path, which --offline never reaches.
+      # Only a signal death (SIGILL=132) or a failed exec fails the job, so a
+      # datos.gov.co outage cannot turn this into a flaky required check.
+      - name: TLS/HTTP path under baseline-CPU emulation (signal failures only)
+        run: |
+          set +e
+          qemu-x86_64 -cpu Nehalem "$(command -v python3)" examples/demo.py
+          code=$?
+          set -e
+          if [ "$code" -ge 126 ]; then
+            echo "Died from a signal or could not exec (exit $code)" >&2
+            exit 1
+          fi
+          echo "No signal death (exit $code); API-level outcome is checked by live-demo."
+
+  # Non-blocking: asserts real datos.gov.co behavior. Outages are reported here
+  # instead of blocking merges.
+  live-demo:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Run demo against datos.gov.co (Nehalem, no AVX)
+        run: |
+          sudo apt-get update && sudo apt-get install -y qemu-user
+          zig build
           cp zig-out/lib/libinvima_ffi.so examples/
           qemu-x86_64 -cpu Nehalem "$(command -v python3)" examples/demo.py
