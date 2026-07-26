@@ -1,8 +1,12 @@
 import os
 import platform
+import sys
 import urllib.request
 import ctypes
 import json
+
+# --offline exercises the ABI without touching datos.gov.co.
+OFFLINE = "--offline" in sys.argv
 
 # 1. Detect OS and architecture
 system = platform.system()
@@ -18,6 +22,8 @@ else:
 
 # 2. Download from GitHub Releases if not present locally
 lib_path = os.path.join(os.path.dirname(__file__), lib_filename)
+if OFFLINE and not os.path.exists(lib_path):
+    raise RuntimeError(f"--offline requires a local {lib_filename} next to this script")
 if not os.path.exists(lib_path):
     url = f"https://github.com/xdvi/invima-validator/releases/latest/download/{lib_filename}"
     print(f"Downloading {lib_filename} from {url}...")
@@ -95,6 +101,44 @@ handle = lib.invima_client_new(None)
 if not handle:
     raise RuntimeError("Failed to create INVIMA client handle")
 
+if OFFLINE:
+    print("\n=== Offline ABI check (no network) ===")
+    try:
+        out = ctypes.c_char_p()
+        null_handle_calls = [
+            ("invima_search_medicines",
+             lib.invima_search_medicines(None, b"x", b"vigente", 1, ctypes.byref(out))),
+            ("invima_find_by_field",
+             lib.invima_find_by_field(None, b"expediente", b"x", b"vigente", 1, ctypes.byref(out))),
+            ("invima_get_medicine_by_cum",
+             lib.invima_get_medicine_by_cum(None, b"x", b"1", b"1", b"vigente", ctypes.byref(out))),
+            ("invima_search_tramites",
+             lib.invima_search_tramites(None, b"x", 1, 0, ctypes.byref(out))),
+        ]
+        for name, code in null_handle_calls:
+            if code != -1:
+                raise RuntimeError(f"{name}(NULL handle) returned {code}, expected -1")
+            print(f"{name}(NULL handle) = {code}")
+
+        err_ptr = ctypes.c_char_p()
+        code = lib.invima_search_medicines(
+            handle, b"x", b"estado-invalido", 1, ctypes.byref(err_ptr)
+        )
+        if code != -2 or not err_ptr.value:
+            raise RuntimeError(f"invalid status returned {code}, expected -2 with error JSON")
+        payload = json.loads(err_ptr.value.decode("utf-8"))
+        lib.invima_free_string(err_ptr)
+        if "error" not in payload:
+            raise RuntimeError(f"error payload missing 'error' key: {payload}")
+        print(f"invalid status = {code}, error JSON = {payload['error']}")
+    finally:
+        lib.invima_client_free(handle)
+    print("\nOffline ABI check passed.")
+    sys.exit(0)
+
+failures = []
+tolerated = []
+
 try:
     # 1. Search medicines
     print("\n=== Búsqueda CUM: ibuprofeno (vigente) ===")
@@ -137,6 +181,7 @@ try:
                 lib.invima_free_string(detail_ptr)
         lib.invima_free_string(out_ptr)
     else:
+        failures.append(f"invima_search_medicines returned {res}")
         print(f"Search failed with code {res}")
 
     # 2. Exact field lookup
@@ -158,15 +203,23 @@ try:
         return code, json.loads(payload) if payload else None
 
     code, rows = find_by_field("expediente", "20048021")
+    if code != 0:
+        failures.append(f"invima_find_by_field(expediente) returned {code}")
     print(f"expediente=20048021 -> code {code}, {len(rows) if isinstance(rows, list) else rows} fila(s)")
     if isinstance(rows, list) and rows:
         print(f"  {rows[0].get('producto', '?')} | {rows[0].get('registrosanitario', '?')}")
 
     code, rows = find_by_field("registrosanitario", "invima 2023m-0013598-r2")
+    if code != 0:
+        failures.append(f"invima_find_by_field(registrosanitario) returned {code}")
     print(f"registrosanitario (minúsculas) -> code {code}, {len(rows) if isinstance(rows, list) else rows} fila(s)")
 
     # Un registro sanitario en el campo expediente no coincide: [] en vez de un falso positivo.
     code, rows = find_by_field("expediente", "INVIMA 2023M-0013598-R2")
+    if code != 0:
+        failures.append(f"invima_find_by_field(expediente, registro sanitario) returned {code}")
+    elif rows != []:
+        failures.append(f"registro sanitario en expediente debía dar [], dio {rows}")
     print(f"registro sanitario puesto en expediente -> code {code}, resultado {rows}")
 
     # 3. Search SUIT tramites
@@ -194,15 +247,48 @@ try:
                     print(f"     - Paso {paso.get('orden_paso', '?')}: {paso.get('descripcion_paso', '?')}")
         lib.invima_free_string(suit_ptr)
     else:
-        # Si devuelve error de red o no autorizado
+        # -2 no distingue "requiere credenciales" de un fallo real del servidor,
+        # así que se tolera pero se reporta con el mensaje exacto.
         if res_suit == -2 and suit_ptr.value:
-            err_str = suit_ptr.value.decode('utf-8')
-            err_obj = json.loads(err_str)
+            err_obj = json.loads(suit_ptr.value.decode('utf-8'))
+            lib.invima_free_string(suit_ptr)
+            if "error" not in err_obj:
+                failures.append(f"invima_search_tramites -2 payload missing 'error': {err_obj}")
+            else:
+                tolerated.append(f"invima_search_tramites -> -2: {err_obj['error']}")
             print(f"Nota: La búsqueda de trámites falló con: {err_obj.get('error', '?')}")
             print("(El dataset público de trámites SUIT 48fq-mxnm requiere credenciales/App Token autorizado en datos.gov.co)")
-            lib.invima_free_string(suit_ptr)
         else:
+            failures.append(f"invima_search_tramites returned {res_suit}")
             print(f"SUIT Search failed with code {res_suit}")
+
+    # texto is documented as optional: NULL lists without a text filter and
+    # must never be reported as a missing-argument error.
+    print("\n=== Trámites SUIT sin filtro de texto (texto = NULL) ===")
+    null_texto_ptr = ctypes.c_char_p()
+    res_null_texto = lib.invima_search_tramites(
+        handle, None, 1, 0, ctypes.byref(null_texto_ptr)
+    )
+    if res_null_texto == -1:
+        failures.append("invima_search_tramites(texto=NULL) returned -1; NULL texto is valid")
+    print(f"texto=NULL -> code {res_null_texto}")
+    if null_texto_ptr.value:
+        if res_null_texto == -2:
+            err = json.loads(null_texto_ptr.value.decode('utf-8'))
+            if "error" not in err:
+                failures.append(f"invima_search_tramites -2 payload missing 'error': {err}")
+        lib.invima_free_string(null_texto_ptr)
 
 finally:
     lib.invima_client_free(handle)
+
+if tolerated:
+    print("\nTOLERADO (no bloquea):")
+    for item in tolerated:
+        print(f"  - {item}")
+
+if failures:
+    print("\nFAILURES:")
+    for failure in failures:
+        print(f"  - {failure}")
+    sys.exit(1)
