@@ -1,7 +1,11 @@
 const std = @import("std");
-const models = @import("models.zig");
-const client_mod = @import("client.zig");
-const InvimaClient = client_mod.InvimaClient;
+
+pub const models = @import("models.zig");
+pub const client = @import("client.zig");
+pub const soql = @import("soql.zig");
+pub const mapping = @import("mapping.zig");
+
+const InvimaClient = client.InvimaClient;
 
 const allocator = std.heap.c_allocator;
 

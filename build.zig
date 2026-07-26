@@ -40,12 +40,21 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
-    // 3. Tests unitarios (funciones puras, sin red)
-    const test_mod = b.createModule(.{
+    // 3. Tests unitarios (funciones puras, sin red). `tests/` no puede importar
+    // `src/` por ruta relativa, así que la biblioteca entra como módulo nombrado.
+    const invima_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+    });
+
+    const test_mod = b.createModule(.{
+        .root_source_file = b.path("tests/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{.{ .name = "invima", .module = invima_mod }},
     });
 
     const tests = b.addTest(.{ .root_module = test_mod });
