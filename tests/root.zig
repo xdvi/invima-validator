@@ -4,4 +4,6 @@ comptime {
     _ = @import("models_test.zig");
     _ = @import("soql_test.zig");
     _ = @import("mapping_test.zig");
+    _ = @import("ffi_test.zig");
+    _ = @import("client_parse_test.zig");
 }
