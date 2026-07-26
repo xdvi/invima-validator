@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 
 pub const models = @import("models.zig");
 pub const client = @import("client.zig");
@@ -17,7 +18,7 @@ pub const InvimaClientHandle = struct {
 export fn invima_client_new(app_token: ?[*:0]const u8) ?*InvimaClientHandle {
     const token = if (app_token) |t| std.mem.span(t) else null;
     const handle = allocator.create(InvimaClientHandle) catch return null;
-    
+
     handle.threaded = std.Io.Threaded.init(allocator, .{});
     const io = handle.threaded.io();
 
@@ -64,24 +65,7 @@ export fn invima_search_medicines(
         allocator.free(suggestions);
     }
 
-    var string_list: std.ArrayList(u8) = .empty;
-    errdefer string_list.deinit(allocator);
-
-    var aw: std.Io.Writer.Allocating = .fromArrayList(allocator, &string_list);
-    errdefer string_list = aw.toArrayList();
-
-    std.json.Stringify.value(suggestions, .{}, &aw.writer) catch |err| {
-        string_list = aw.toArrayList();
-        writeError(out, @errorName(err)) catch return -2;
-        return -2;
-    };
-
-    string_list = aw.toArrayList();
-    string_list.append(allocator, 0) catch return -2;
-
-    const slice = string_list.toOwnedSlice(allocator) catch return -2;
-    out.* = @ptrCast(slice.ptr);
-    return 0;
+    return writeJsonResult(out, suggestions);
 }
 
 export fn invima_find_by_field(
@@ -123,24 +107,7 @@ export fn invima_find_by_field(
         allocator.free(suggestions);
     }
 
-    var string_list: std.ArrayList(u8) = .empty;
-    errdefer string_list.deinit(allocator);
-
-    var aw: std.Io.Writer.Allocating = .fromArrayList(allocator, &string_list);
-    errdefer string_list = aw.toArrayList();
-
-    std.json.Stringify.value(suggestions, .{}, &aw.writer) catch |err| {
-        string_list = aw.toArrayList();
-        writeError(out, @errorName(err)) catch return -2;
-        return -2;
-    };
-
-    string_list = aw.toArrayList();
-    string_list.append(allocator, 0) catch return -2;
-
-    const slice = string_list.toOwnedSlice(allocator) catch return -2;
-    out.* = @ptrCast(slice.ptr);
-    return 0;
+    return writeJsonResult(out, suggestions);
 }
 
 export fn invima_get_medicine_by_cum(
@@ -174,24 +141,7 @@ export fn invima_get_medicine_by_cum(
     };
     defer h.client.freeMedicine(medicine);
 
-    var string_list: std.ArrayList(u8) = .empty;
-    errdefer string_list.deinit(allocator);
-
-    var aw: std.Io.Writer.Allocating = .fromArrayList(allocator, &string_list);
-    errdefer string_list = aw.toArrayList();
-
-    std.json.Stringify.value(medicine, .{}, &aw.writer) catch |err| {
-        string_list = aw.toArrayList();
-        writeError(out, @errorName(err)) catch return -2;
-        return -2;
-    };
-
-    string_list = aw.toArrayList();
-    string_list.append(allocator, 0) catch return -2;
-
-    const slice = string_list.toOwnedSlice(allocator) catch return -2;
-    out.* = @ptrCast(slice.ptr);
-    return 0;
+    return writeJsonResult(out, medicine);
 }
 
 export fn invima_search_tramites(
@@ -212,24 +162,7 @@ export fn invima_search_tramites(
     };
     defer h.client.freeTramiteSearchResult(result);
 
-    var string_list: std.ArrayList(u8) = .empty;
-    errdefer string_list.deinit(allocator);
-
-    var aw: std.Io.Writer.Allocating = .fromArrayList(allocator, &string_list);
-    errdefer string_list = aw.toArrayList();
-
-    std.json.Stringify.value(result, .{}, &aw.writer) catch |err| {
-        string_list = aw.toArrayList();
-        writeError(out, @errorName(err)) catch return -2;
-        return -2;
-    };
-
-    string_list = aw.toArrayList();
-    string_list.append(allocator, 0) catch return -2;
-
-    const slice = string_list.toOwnedSlice(allocator) catch return -2;
-    out.* = @ptrCast(slice.ptr);
-    return 0;
+    return writeJsonResult(out, result);
 }
 
 export fn invima_free_string(ptr: ?[*:0]u8) void {
@@ -241,8 +174,27 @@ export fn invima_free_string(ptr: ?[*:0]u8) void {
     }
 }
 
+const version_z: [:0]const u8 = build_options.version[0..build_options.version.len :0];
+
 export fn invima_version() ?[*:0]const u8 {
-    return "0.2.0-zig-beta";
+    return version_z.ptr;
+}
+
+fn stringifyZ(value: anytype) ![:0]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+    try std.json.Stringify.value(value, .{}, &aw.writer);
+    return aw.toOwnedSliceSentinel(0);
+}
+
+/// Serializa `value` en `out`. La cadena resultante se libera con `invima_free_string`.
+fn writeJsonResult(out: *?[*:0]u8, value: anytype) i32 {
+    const json = stringifyZ(value) catch |err| {
+        writeError(out, @errorName(err)) catch return -2;
+        return -2;
+    };
+    out.* = json.ptr;
+    return 0;
 }
 
 fn writeError(out: *?[*:0]u8, message: []const u8) !void {
