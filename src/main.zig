@@ -80,6 +80,65 @@ export fn invima_search_medicines(
     return 0;
 }
 
+export fn invima_find_by_field(
+    handle: ?*const InvimaClientHandle,
+    field_ptr: ?[*:0]const u8,
+    value_ptr: ?[*:0]const u8,
+    status_ptr: ?[*:0]const u8,
+    limit: usize,
+    out_json: ?*?[*:0]u8,
+) i32 {
+    const h = handle orelse return -1;
+    const f_ptr = field_ptr orelse return -1;
+    const v_ptr = value_ptr orelse return -1;
+    const s_ptr = status_ptr orelse return -1;
+    const out = out_json orelse return -1;
+
+    const field_str = std.mem.span(f_ptr);
+    const value = std.mem.span(v_ptr);
+    const status_str = std.mem.span(s_ptr);
+
+    const field = models.FindField.parse(field_str) orelse {
+        writeError(out, "campo de búsqueda inválido") catch return -2;
+        return -2;
+    };
+
+    const status = models.RegistrationStatus.parse(status_str) orelse {
+        writeError(out, "estado de registro inválido") catch return -2;
+        return -2;
+    };
+
+    const suggestions = h.client.findByField(field, value, status, limit) catch |err| {
+        writeError(out, @errorName(err)) catch return -2;
+        return -2;
+    };
+    defer {
+        for (suggestions) |s| {
+            h.client.freeSuggestion(s);
+        }
+        allocator.free(suggestions);
+    }
+
+    var string_list: std.ArrayList(u8) = .empty;
+    errdefer string_list.deinit(allocator);
+
+    var aw: std.Io.Writer.Allocating = .fromArrayList(allocator, &string_list);
+    errdefer string_list = aw.toArrayList();
+
+    std.json.Stringify.value(suggestions, .{}, &aw.writer) catch |err| {
+        string_list = aw.toArrayList();
+        writeError(out, @errorName(err)) catch return -2;
+        return -2;
+    };
+
+    string_list = aw.toArrayList();
+    string_list.append(allocator, 0) catch return -2;
+
+    const slice = string_list.toOwnedSlice(allocator) catch return -2;
+    out.* = @ptrCast(slice.ptr);
+    return 0;
+}
+
 export fn invima_get_medicine_by_cum(
     handle: ?*const InvimaClientHandle,
     expediente_ptr: ?[*:0]const u8,
@@ -179,7 +238,7 @@ export fn invima_free_string(ptr: ?[*:0]u8) void {
 }
 
 export fn invima_version() ?[*:0]const u8 {
-    return "0.1.0-zig-beta";
+    return "0.2.0-zig-beta";
 }
 
 fn writeError(out: *?[*:0]u8, message: []const u8) !void {

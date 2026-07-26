@@ -64,6 +64,16 @@ lib.invima_get_medicine_by_cum.argtypes = [
     ctypes.POINTER(ctypes.c_char_p)
 ]
 
+lib.invima_find_by_field.restype = ctypes.c_int
+lib.invima_find_by_field.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_char_p,
+    ctypes.c_char_p,
+    ctypes.c_char_p,
+    ctypes.c_size_t,
+    ctypes.POINTER(ctypes.c_char_p)
+]
+
 lib.invima_search_tramites.restype = ctypes.c_int
 lib.invima_search_tramites.argtypes = [
     ctypes.c_void_p,
@@ -129,7 +139,37 @@ try:
     else:
         print(f"Search failed with code {res}")
 
-    # 2. Search SUIT tramites
+    # 2. Exact field lookup
+    print("\n=== Búsqueda exacta por campo ===")
+
+    def find_by_field(field, value, status="vigente", limit=3):
+        out = ctypes.c_char_p()
+        code = lib.invima_find_by_field(
+            handle,
+            field.encode('utf-8'),
+            value.encode('utf-8'),
+            status.encode('utf-8'),
+            limit,
+            ctypes.byref(out)
+        )
+        payload = out.value.decode('utf-8') if out.value else None
+        if out.value:
+            lib.invima_free_string(out)
+        return code, json.loads(payload) if payload else None
+
+    code, rows = find_by_field("expediente", "20048021")
+    print(f"expediente=20048021 -> code {code}, {len(rows) if isinstance(rows, list) else rows} fila(s)")
+    if isinstance(rows, list) and rows:
+        print(f"  {rows[0].get('producto', '?')} | {rows[0].get('registrosanitario', '?')}")
+
+    code, rows = find_by_field("registrosanitario", "invima 2023m-0013598-r2")
+    print(f"registrosanitario (minúsculas) -> code {code}, {len(rows) if isinstance(rows, list) else rows} fila(s)")
+
+    # Un registro sanitario en el campo expediente no coincide: [] en vez de un falso positivo.
+    code, rows = find_by_field("expediente", "INVIMA 2023M-0013598-R2")
+    print(f"registro sanitario puesto en expediente -> code {code}, resultado {rows}")
+
+    # 3. Search SUIT tramites
     print("\n=== Búsqueda de Trámites SUIT ===")
     suit_ptr = ctypes.c_char_p()
     res_suit = lib.invima_search_tramites(

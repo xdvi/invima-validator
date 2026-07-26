@@ -89,6 +89,32 @@ pub const InvimaClient = struct {
         const soql = try std.fmt.allocPrint(self.allocator, "SELECT * ORDER BY `:id` ASC NULL LAST SEARCH \"{s}\" LIMIT {d} OFFSET 0", .{ escaped, limit });
         defer self.allocator.free(soql);
 
+        return self.suggestionsFromSoql(status, soql);
+    }
+
+    /// Búsqueda exacta por columna. Un slice vacío significa sin coincidencias, no error.
+    pub fn findByField(
+        self: *const InvimaClient,
+        field: models.FindField,
+        value: []const u8,
+        status: models.RegistrationStatus,
+        limit: usize,
+    ) ![]models.MedicineSuggestion {
+        const trimmed = std.mem.trim(u8, value, " \t\r\n");
+        if (trimmed.len == 0) return error.InvalidStatus;
+        if (!isFindValueQueryable(field, trimmed)) return self.allocator.alloc(models.MedicineSuggestion, 0);
+
+        const soql = try buildFindSoql(self.allocator, field, trimmed, normalizeFindLimit(limit));
+        defer self.allocator.free(soql);
+
+        return self.suggestionsFromSoql(status, soql);
+    }
+
+    fn suggestionsFromSoql(
+        self: *const InvimaClient,
+        status: models.RegistrationStatus,
+        soql: []const u8,
+    ) ![]models.MedicineSuggestion {
         const medicines = try self.queryCumDataset(status, soql);
         defer {
             for (medicines) |m| {
@@ -98,34 +124,7 @@ pub const InvimaClient = struct {
             self.allocator.free(medicines);
         }
 
-        var suggestions: std.ArrayList(models.MedicineSuggestion) = .empty;
-        errdefer {
-            for (suggestions.items) |s| {
-                self.freeSuggestion(s);
-            }
-            suggestions.deinit(self.allocator);
-        }
-
-        for (medicines) |m| {
-            if (m.muestramedica) |mm| {
-                if (std.ascii.eqlIgnoreCase(mm, "si")) continue;
-            }
-            const s = models.MedicineSuggestion{
-                .expediente = if (m.expediente) |v| try self.allocator.dupe(u8, v) else null,
-                .producto = if (m.producto) |v| try self.allocator.dupe(u8, v) else null,
-                .titular = if (m.titular) |v| try self.allocator.dupe(u8, v) else null,
-                .registrosanitario = if (m.registrosanitario) |v| try self.allocator.dupe(u8, v) else null,
-                .consecutivocum = if (m.consecutivocum) |v| try self.allocator.dupe(u8, v) else null,
-                .cantidadcum = if (m.cantidadcum) |v| try self.allocator.dupe(u8, v) else null,
-                .descripcioncomercial = if (m.descripcioncomercial) |v| try self.allocator.dupe(u8, v) else null,
-                .atc = if (m.atc) |v| try self.allocator.dupe(u8, v) else null,
-                .nombrerol = if (m.nombrerol) |v| try self.allocator.dupe(u8, v) else null,
-                .muestramedica = if (m.muestramedica) |v| try self.allocator.dupe(u8, v) else null,
-            };
-            try suggestions.append(self.allocator, s);
-        }
-
-        return suggestions.toOwnedSlice(self.allocator);
+        return toSuggestions(self.allocator, medicines);
     }
 
     pub fn getMedicineByCum(
@@ -263,16 +262,7 @@ pub const InvimaClient = struct {
     }
 
     pub fn freeSuggestion(self: *const InvimaClient, s: models.MedicineSuggestion) void {
-        if (s.expediente) |v| self.allocator.free(v);
-        if (s.producto) |v| self.allocator.free(v);
-        if (s.titular) |v| self.allocator.free(v);
-        if (s.registrosanitario) |v| self.allocator.free(v);
-        if (s.consecutivocum) |v| self.allocator.free(v);
-        if (s.cantidadcum) |v| self.allocator.free(v);
-        if (s.descripcioncomercial) |v| self.allocator.free(v);
-        if (s.atc) |v| self.allocator.free(v);
-        if (s.nombrerol) |v| self.allocator.free(v);
-        if (s.muestramedica) |v| self.allocator.free(v);
+        freeSuggestionWith(self.allocator, s);
     }
 
     fn querySuit(
@@ -741,6 +731,101 @@ fn escapeSqlString(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     return std.mem.replaceOwned(u8, allocator, input, "'", "''");
 }
 
+fn freeSuggestionWith(allocator: std.mem.Allocator, s: models.MedicineSuggestion) void {
+    if (s.expediente) |v| allocator.free(v);
+    if (s.producto) |v| allocator.free(v);
+    if (s.titular) |v| allocator.free(v);
+    if (s.registrosanitario) |v| allocator.free(v);
+    if (s.consecutivocum) |v| allocator.free(v);
+    if (s.cantidadcum) |v| allocator.free(v);
+    if (s.descripcioncomercial) |v| allocator.free(v);
+    if (s.atc) |v| allocator.free(v);
+    if (s.nombrerol) |v| allocator.free(v);
+    if (s.muestramedica) |v| allocator.free(v);
+}
+
+/// Proyecta medicamentos a sugerencias, descartando muestras médicas.
+fn toSuggestions(
+    allocator: std.mem.Allocator,
+    medicines: []const models.Medicine,
+) ![]models.MedicineSuggestion {
+    var suggestions: std.ArrayList(models.MedicineSuggestion) = .empty;
+    errdefer {
+        for (suggestions.items) |s| {
+            freeSuggestionWith(allocator, s);
+        }
+        suggestions.deinit(allocator);
+    }
+
+    for (medicines) |m| {
+        if (m.muestramedica) |mm| {
+            if (std.ascii.eqlIgnoreCase(mm, "si")) continue;
+        }
+        const s = models.MedicineSuggestion{
+            .expediente = if (m.expediente) |v| try allocator.dupe(u8, v) else null,
+            .producto = if (m.producto) |v| try allocator.dupe(u8, v) else null,
+            .titular = if (m.titular) |v| try allocator.dupe(u8, v) else null,
+            .registrosanitario = if (m.registrosanitario) |v| try allocator.dupe(u8, v) else null,
+            .consecutivocum = if (m.consecutivocum) |v| try allocator.dupe(u8, v) else null,
+            .cantidadcum = if (m.cantidadcum) |v| try allocator.dupe(u8, v) else null,
+            .descripcioncomercial = if (m.descripcioncomercial) |v| try allocator.dupe(u8, v) else null,
+            .atc = if (m.atc) |v| try allocator.dupe(u8, v) else null,
+            .nombrerol = if (m.nombrerol) |v| try allocator.dupe(u8, v) else null,
+            .muestramedica = if (m.muestramedica) |v| try allocator.dupe(u8, v) else null,
+        };
+        try suggestions.append(allocator, s);
+    }
+
+    return suggestions.toOwnedSlice(allocator);
+}
+
+const FIND_LIMIT_DEFAULT: usize = 5;
+const FIND_LIMIT_MAX: usize = 100;
+
+fn normalizeFindLimit(limit: usize) usize {
+    if (limit == 0) return FIND_LIMIT_DEFAULT;
+    return @min(limit, FIND_LIMIT_MAX);
+}
+
+/// `expediente` es columna numérica en Socrata: un valor no numérico produce
+/// HTTP 400 en vez de un resultado vacío, así que se descarta antes de consultar.
+fn isFindValueQueryable(field: models.FindField, value: []const u8) bool {
+    if (value.len == 0) return false;
+    return switch (field) {
+        .expediente => for (value) |c| {
+            if (!std.ascii.isDigit(c)) break false;
+        } else true,
+        .registrosanitario => true,
+    };
+}
+
+/// Arma el SoQL de búsqueda exacta. `value` debe venir recortado y no vacío.
+fn buildFindSoql(
+    allocator: std.mem.Allocator,
+    field: models.FindField,
+    value: []const u8,
+    limit: usize,
+) ![]u8 {
+    // escapeSqlString, no escapeSoqlString: este literal va entre comillas simples,
+    // donde SoQL no interpreta backslashes y escaparlos corrompería el valor.
+    const escaped = try escapeSqlString(allocator, value);
+    defer allocator.free(escaped);
+
+    return switch (field) {
+        // El expediente es numérico: comparar tal cual mantiene la columna indexable.
+        .expediente => std.fmt.allocPrint(
+            allocator,
+            "SELECT * WHERE `{s}` = '{s}' ORDER BY `:id` ASC LIMIT {d}",
+            .{ field.column(), escaped, limit },
+        ),
+        .registrosanitario => std.fmt.allocPrint(
+            allocator,
+            "SELECT * WHERE upper(`{s}`) = upper('{s}') ORDER BY `:id` ASC LIMIT {d}",
+            .{ field.column(), escaped, limit },
+        ),
+    };
+}
+
 fn cleanValue(allocator: std.mem.Allocator, val: ?[]const u8) !?[]const u8 {
     const v = val orelse return null;
     const trimmed = std.mem.trim(u8, v, " \t\r\n");
@@ -1003,4 +1088,96 @@ fn freeJsonValue(allocator: std.mem.Allocator, value: std.json.Value) void {
         },
         else => {},
     }
+}
+
+const testing = std.testing;
+
+test "buildFindSoql filtra expediente por igualdad exacta" {
+    const soql = try buildFindSoql(testing.allocator, .expediente, "20048021", 5);
+    defer testing.allocator.free(soql);
+
+    try testing.expectEqualStrings(
+        "SELECT * WHERE `expediente` = '20048021' ORDER BY `:id` ASC LIMIT 5",
+        soql,
+    );
+}
+
+test "buildFindSoql compara registro sanitario ignorando mayúsculas" {
+    const soql = try buildFindSoql(testing.allocator, .registrosanitario, "invima 2023m-0013598-r2", 5);
+    defer testing.allocator.free(soql);
+
+    try testing.expectEqualStrings(
+        "SELECT * WHERE upper(`registrosanitario`) = upper('invima 2023m-0013598-r2') ORDER BY `:id` ASC LIMIT 5",
+        soql,
+    );
+}
+
+test "buildFindSoql duplica comillas simples del valor" {
+    const soql = try buildFindSoql(testing.allocator, .expediente, "O'BRIEN", 5);
+    defer testing.allocator.free(soql);
+
+    try testing.expectEqualStrings(
+        "SELECT * WHERE `expediente` = 'O''BRIEN' ORDER BY `:id` ASC LIMIT 5",
+        soql,
+    );
+}
+
+test "toSuggestions descarta muestras médicas y copia el resto" {
+    const medicines = [_]models.Medicine{
+        .{ .expediente = "1", .producto = "A", .muestramedica = "No" },
+        .{ .expediente = "2", .producto = "B", .muestramedica = "SI" },
+        .{ .expediente = "3", .producto = "C", .muestramedica = null },
+    };
+
+    const suggestions = try toSuggestions(testing.allocator, &medicines);
+    defer {
+        for (suggestions) |s| freeSuggestionWith(testing.allocator, s);
+        testing.allocator.free(suggestions);
+    }
+
+    try testing.expectEqual(@as(usize, 2), suggestions.len);
+    try testing.expectEqualStrings("A", suggestions[0].producto.?);
+    try testing.expectEqualStrings("C", suggestions[1].producto.?);
+}
+
+test "toSuggestions sobre una lista vacía devuelve un slice vacío" {
+    const suggestions = try toSuggestions(testing.allocator, &.{});
+    defer testing.allocator.free(suggestions);
+
+    try testing.expectEqual(@as(usize, 0), suggestions.len);
+}
+
+test "isFindValueQueryable rechaza expedientes no numéricos" {
+    // `expediente` es columna NUMBER en Socrata: comparar contra texto da HTTP 400,
+    // no un resultado vacío.
+    try testing.expect(isFindValueQueryable(.expediente, "20048021"));
+    try testing.expect(!isFindValueQueryable(.expediente, "INVIMA 2023M-0013598-R2"));
+    try testing.expect(!isFindValueQueryable(.expediente, "2004-8021"));
+    try testing.expect(!isFindValueQueryable(.expediente, ""));
+}
+
+test "isFindValueQueryable acepta cualquier registro sanitario" {
+    try testing.expect(isFindValueQueryable(.registrosanitario, "INVIMA 2023M-0013598-R2"));
+    try testing.expect(isFindValueQueryable(.registrosanitario, "20048021"));
+}
+
+test "normalizeFindLimit aplica valor por defecto y tope" {
+    try testing.expectEqual(@as(usize, 5), normalizeFindLimit(0));
+    try testing.expectEqual(@as(usize, 1), normalizeFindLimit(1));
+    try testing.expectEqual(@as(usize, 100), normalizeFindLimit(100));
+    try testing.expectEqual(@as(usize, 100), normalizeFindLimit(5000));
+}
+
+test "urlEncode escapa backticks, comillas y espacios de la query" {
+    const encoded = try urlEncode(testing.allocator, "a `b` 'c'");
+    defer testing.allocator.free(encoded);
+
+    try testing.expectEqualStrings("a%20%60b%60%20%27c%27", encoded);
+}
+
+test "escapeSqlString solo duplica comillas simples" {
+    const escaped = try escapeSqlString(testing.allocator, "a'b\\c\"d");
+    defer testing.allocator.free(escaped);
+
+    try testing.expectEqualStrings("a''b\\c\"d", escaped);
 }

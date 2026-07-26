@@ -33,6 +33,39 @@ pub const RegistrationStatus = enum {
     }
 };
 
+/// Columnas permitidas en búsquedas exactas por campo.
+pub const FindField = enum {
+    expediente,
+    registrosanitario,
+
+    pub fn parse(value: []const u8) ?FindField {
+        if (std.ascii.eqlIgnoreCase(value, "expediente")) return .expediente;
+        if (std.ascii.eqlIgnoreCase(value, "registrosanitario")) return .registrosanitario;
+        if (std.ascii.eqlIgnoreCase(value, "registro_sanitario")) return .registrosanitario;
+        return null;
+    }
+
+    pub fn column(self: FindField) []const u8 {
+        return switch (self) {
+            .expediente => "expediente",
+            .registrosanitario => "registrosanitario",
+        };
+    }
+};
+
+test "FindField.parse acepta nombres válidos sin distinguir mayúsculas" {
+    try std.testing.expectEqual(FindField.expediente, FindField.parse("expediente").?);
+    try std.testing.expectEqual(FindField.expediente, FindField.parse("EXPEDIENTE").?);
+    try std.testing.expectEqual(FindField.registrosanitario, FindField.parse("registrosanitario").?);
+    try std.testing.expectEqual(FindField.registrosanitario, FindField.parse("registro_sanitario").?);
+}
+
+test "FindField.parse rechaza columnas fuera de la lista blanca" {
+    try std.testing.expectEqual(@as(?FindField, null), FindField.parse("producto"));
+    try std.testing.expectEqual(@as(?FindField, null), FindField.parse(""));
+    try std.testing.expectEqual(@as(?FindField, null), FindField.parse("expediente` = '1' OR '1"));
+}
+
 pub const Medicine = struct {
     expediente: ?[]const u8 = null,
     producto: ?[]const u8 = null,
