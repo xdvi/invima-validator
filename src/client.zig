@@ -9,9 +9,11 @@ const BASE_URL = "https://www.datos.gov.co/resource";
 const SUIT_DATASET_ID = "48fq-mxnm";
 const INVIMA_ENTITY = "INSTITUTO NACIONAL DE VIGILANCIA DE MEDICAMENTOS Y ALIMENTOS";
 
-/// Handshakes against the upstream load balancer fail intermittently and the
-/// standard library flattens the cause into `TlsInitializationFailed`.
-const connect_attempts = 3;
+/// The upstream AWS NLB resets fresh TCP connections in bursts (~29% in a bad
+/// window); std.http.Client reports this as `TlsInitializationFailed`. A reset
+/// arrives before any request is sent, so retrying is safe; six attempts with
+/// linear backoff (~3.75s total) ride out a burst.
+const connect_attempts = 6;
 const retry_backoff_ms = 250;
 /// A stalled connection would otherwise block the caller forever; std.http.Client
 /// exposes no request timeout, so each attempt races against a deadline.
