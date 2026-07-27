@@ -4,6 +4,7 @@
 import pathlib
 import re
 import sys
+import tempfile
 
 try:
     import yaml
@@ -12,6 +13,7 @@ except ModuleNotFoundError:
 
 EXPRESSION = re.compile(r"\$\{\{.*?\}\}", re.DOTALL)
 WORKFLOW_DIR = pathlib.Path(__file__).resolve().parent.parent / ".github" / "workflows"
+INJECTED_YAML = "jobs:\n  j:\n    steps:\n      - run: echo ${{ github.ref_name }}\n"
 
 
 def steps_of(job):
@@ -46,14 +48,20 @@ def inspect(path):
 
 def self_test():
     injected = {"jobs": {"j": {"steps": [{"run": "gh release create ${{ github.ref_name }} x"}]}}}
-    multiline = {"jobs": {"j": {"steps": [{"run": "echo a\necho '${{ github.event.issue.title }}'"}]}}}
+    # The expression itself straddles the newline, so this fails without re.DOTALL.
+    spanning = {"jobs": {"j": {"steps": [{"run": "echo '${{ github.event.issue.title\n  }}'"}]}}}
     safe = {"jobs": {"j": {"steps": [{"env": {"TAG": "${{ github.ref_name }}"}, "run": 'echo "$TAG"'}]}}}
+    shapes = {"jobs": {"call": {"uses": "./wf.yml"}, "odd": {"steps": ["x", {"run": 42}]}}}
     checks = [
         ("detects an injected expression", lambda: len(scan("t", injected)) == 1),
-        ("detects a multiline injection", lambda: len(scan("t", multiline)) == 1),
+        ("detects an expression spanning lines", lambda: len(scan("t", spanning)) == 1),
         ("allows values passed through env:", lambda: scan("t", safe) == []),
+        ("tolerates jobs without usable steps", lambda: scan("t", shapes) == []),
         ("rejects a document without jobs", lambda: _raises(lambda: scan("t", {}))),
         ("rejects an empty document", lambda: _raises(lambda: scan("t", None))),
+        ("reports an injection read from a file", lambda: _inspect_finds(INJECTED_YAML, 1, 0)),
+        ("fails closed on unparseable yaml", lambda: _inspect_finds("a:\n  b: [\n", 0, 1)),
+        ("fails closed on an empty file", lambda: _inspect_finds("", 0, 1)),
     ]
     failed = [label for label, check in checks if not check()]
     for label in failed:
@@ -70,6 +78,15 @@ def _raises(call):
     except ValueError:
         return True
     return False
+
+
+def _inspect_finds(text, violations, errors):
+    """Runs the real file-reading path so a break there cannot pass unnoticed."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = pathlib.Path(directory) / "probe.yml"
+        path.write_text(text, encoding="utf-8")
+        found, failed = inspect(path)
+    return len(found) == violations and len(failed) == errors
 
 
 def main():

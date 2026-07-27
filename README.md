@@ -44,8 +44,10 @@ CI also lints the workflows. It rejects any `${{ }}` expression inside a `run:`
 body, because Actions substitutes those as raw shell text before the shell parses
 the script; values belong in `env:` instead. Run it locally with:
 
+Both commands need PyYAML (`apt install python3-yaml`, or `pip install pyyaml`):
+
 ```sh
-python3 scripts/lint_workflows.py             # needs PyYAML (apt: python3-yaml)
+python3 scripts/lint_workflows.py             # lints the workflows
 python3 scripts/lint_workflows.py --self-test # checks the detector itself
 ```
 
