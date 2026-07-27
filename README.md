@@ -124,8 +124,9 @@ recommended to avoid throttling on datos.gov.co. Returns null on allocation
 failure.
 
 Each request runs against a 30-second deadline and retries a timed-out or
-transient connection up to three times, so a stalled upstream returns an error
-instead of blocking the caller forever. The deadline needs the multi-threaded
+transient connection up to eight times, so a stalled upstream returns an error
+instead of blocking the caller forever. The upstream load balancer resets fresh
+connections in bursts; the retries ride those out. The deadline needs the multi-threaded
 build (the default); `zig build -Dsingle-threaded=true` produces a smaller
 library with no request timeout.
 
