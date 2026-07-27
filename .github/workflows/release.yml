@@ -16,6 +16,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # A tag can be pushed without ever passing CI, so the guard runs here too.
+      - name: Lint workflows
+        run: |
+          python3 -c "import yaml" 2>/dev/null || sudo apt-get install -y python3-yaml
+          python3 scripts/lint_workflows.py --self-test
+          python3 scripts/lint_workflows.py
+
       # TAG arrives via env, never interpolated into the script body: a tag name
       # is attacker-controlled and `${{ }}` is substituted as raw shell text.
       - name: Compare tag against declared version
@@ -128,14 +135,16 @@ jobs:
           find artifacts -type f -exec cp {} release-assets/ \;
           ls -la release-assets
 
+      # Same env-not-interpolation rule as verify-version above.
       - name: Create Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
-          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
-            echo "Release ${{ github.ref_name }} already exists. Skipping creation."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Skipping creation."
           else
-            gh release create ${{ github.ref_name }} release-assets/* \
-              --title "${{ github.ref_name }}" \
+            gh release create "$TAG" release-assets/* \
+              --title "$TAG" \
               --generate-notes
           fi
