@@ -21,6 +21,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{ .default_target = default_target });
     const optimize = b.standardOptimizeOption(.{});
 
+    const single_threaded = b.option(bool, "single-threaded", "Compile the library single-threaded") orelse false;
+
     // Única fuente de verdad de la versión: `build.zig.zon`.
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "version", zon.version);
@@ -33,7 +35,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
         .strip = true,
-        .single_threaded = true,
+        .single_threaded = single_threaded,
         .unwind_tables = .none,
     });
     lib_mod.addImport("build_options", build_options_mod);

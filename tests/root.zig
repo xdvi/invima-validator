@@ -7,4 +7,5 @@ comptime {
     _ = @import("ffi_test.zig");
     _ = @import("client_parse_test.zig");
     _ = @import("retry_test.zig");
+    _ = @import("timeout_test.zig");
 }

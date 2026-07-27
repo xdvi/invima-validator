@@ -13,6 +13,9 @@ const INVIMA_ENTITY = "INSTITUTO NACIONAL DE VIGILANCIA DE MEDICAMENTOS Y ALIMEN
 /// standard library flattens the cause into `TlsInitializationFailed`.
 const connect_attempts = 3;
 const retry_backoff_ms = 250;
+/// A stalled connection would otherwise block the caller forever; std.http.Client
+/// exposes no request timeout, so each attempt races against a deadline.
+const default_timeout_ms = 30_000;
 
 /// Errors worth another attempt: the connection never carried a response, so
 /// retrying cannot duplicate a side effect. These reads are idempotent anyway.
@@ -38,6 +41,7 @@ pub const InvimaClient = struct {
     app_token: ?[]const u8,
     /// Heap-allocated so `*const InvimaClient` can still reuse its connection pool.
     http: ?*std.http.Client,
+    timeout_ms: u64,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, app_token: ?[]const u8) InvimaClient {
         const token_copy = if (app_token) |t| allocator.dupe(u8, t) catch null else null;
@@ -48,6 +52,7 @@ pub const InvimaClient = struct {
             .io = io,
             .app_token = token_copy,
             .http = http,
+            .timeout_ms = default_timeout_ms,
         };
     }
 
@@ -64,15 +69,60 @@ pub const InvimaClient = struct {
     fn get(self: *const InvimaClient, url: []const u8) ![]u8 {
         var attempt: usize = 0;
         while (true) {
-            return self.getOnce(url) catch |err| {
+            return self.getBounded(url) catch |err| {
                 attempt += 1;
                 if (attempt >= connect_attempts or !isTransient(err)) return err;
-                // A failed handshake can leave a poisoned pooled connection behind.
+                // A failed or timed-out handshake can leave a poisoned pooled connection behind.
                 self.resetPool();
                 self.io.sleep(.fromMilliseconds(retry_backoff_ms * @as(i64, @intCast(attempt))), .awake) catch {};
                 continue;
             };
         }
+    }
+
+    /// Runs one fetch against a deadline. `error.ConnectionTimedOut` (transient,
+    /// so `get` retries it) is returned if the deadline wins the race.
+    fn getBounded(self: *const InvimaClient, url: []const u8) ![]u8 {
+        const io = self.io;
+        const Outcome = union(enum) { fetch: anyerror![]u8, deadline: void };
+        var slots: [2]Outcome = undefined;
+        var select = std.Io.Select(Outcome).init(io, &slots);
+
+        select.concurrent(.fetch, fetchErased, .{ self, url }) catch {
+            // No concurrency available (e.g. single-threaded build): fetch unbounded.
+            return self.getOnce(url);
+        };
+        // If the deadline cannot be scheduled, still await the fetch rather than fail.
+        select.concurrent(.deadline, deadlineArm, .{ io, self.timeout_ms }) catch {};
+
+        const first = select.await() catch |err| {
+            self.drain(&select);
+            return err;
+        };
+        self.drain(&select);
+
+        return switch (first) {
+            .fetch => |body| body,
+            .deadline => error.ConnectionTimedOut,
+        };
+    }
+
+    /// Cancels the losing arm and frees a body that completed in a race with the deadline.
+    fn drain(self: *const InvimaClient, select: anytype) void {
+        while (select.cancel()) |leftover| {
+            switch (leftover) {
+                .fetch => |body| if (body) |slice| self.allocator.free(slice) else |_| {},
+                .deadline => {},
+            }
+        }
+    }
+
+    fn fetchErased(self: *const InvimaClient, url: []const u8) anyerror![]u8 {
+        return self.getOnce(url);
+    }
+
+    fn deadlineArm(io: std.Io, ms: u64) void {
+        io.sleep(.fromMilliseconds(std.math.lossyCast(i64, ms)), .awake) catch {};
     }
 
     fn resetPool(self: *const InvimaClient) void {
