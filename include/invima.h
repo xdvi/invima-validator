@@ -28,6 +28,10 @@ typedef struct InvimaClientHandle InvimaClientHandle;
  * app_token: optional Socrata app token, may be NULL. Sent as X-App-Token.
  * Returns NULL on allocation failure. Caller owns the handle and must release
  * it with invima_client_free.
+ * Requests run against a 30-second deadline (multi-threaded build only), so a
+ * query returns an error instead of blocking forever on a stalled connection.
+ * A handle is NOT thread-safe: never call two functions on the same handle
+ * concurrently. Use one handle per thread, or serialize access to it.
  */
 InvimaClientHandle *invima_client_new(const char *app_token);
 

@@ -13,6 +13,9 @@ const INVIMA_ENTITY = "INSTITUTO NACIONAL DE VIGILANCIA DE MEDICAMENTOS Y ALIMEN
 /// standard library flattens the cause into `TlsInitializationFailed`.
 const connect_attempts = 3;
 const retry_backoff_ms = 250;
+/// A stalled connection would otherwise block the caller forever; std.http.Client
+/// exposes no request timeout, so each attempt races against a deadline.
+const default_timeout_ms = 30_000;
 
 /// Errors worth another attempt: the connection never carried a response, so
 /// retrying cannot duplicate a side effect. These reads are idempotent anyway.
@@ -32,12 +35,63 @@ pub fn isTransient(err: anyerror) bool {
     };
 }
 
+fn deadlineArm(io: std.Io, ms: u64) void {
+    io.sleep(.fromMilliseconds(std.math.lossyCast(i64, ms)), .awake) catch {};
+}
+
+/// Cancels the losing arm and frees a body that completed in a race with the deadline.
+fn drainSelect(select: anytype, allocator: std.mem.Allocator) void {
+    while (select.cancel()) |leftover| {
+        switch (leftover) {
+            .fetch => |body| if (body) |slice| allocator.free(slice) else |_| {},
+            .deadline => {},
+        }
+    }
+}
+
+/// Runs `work(args)` against a deadline. Returns `error.ConnectionTimedOut` if the
+/// deadline wins; the work's body, if it completes in the race, is freed by the drain.
+/// Falls back to running `work` unbounded if concurrency is unavailable.
+pub fn raceWithDeadline(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    timeout_ms: u64,
+    comptime work: anytype,
+    args: anytype,
+) anyerror![]u8 {
+    const Outcome = union(enum) { fetch: anyerror![]u8, deadline: void };
+    var slots: [2]Outcome = undefined;
+    var select = std.Io.Select(Outcome).init(io, &slots);
+
+    // The deadline is armed first: without it there is no bound, so fall back to
+    // a plain call rather than run the fetch arm with nothing to cut it.
+    select.concurrent(.deadline, deadlineArm, .{ io, timeout_ms }) catch {
+        return @call(.auto, work, args);
+    };
+    select.concurrent(.fetch, work, args) catch {
+        drainSelect(&select, allocator);
+        return @call(.auto, work, args);
+    };
+
+    const first = select.await() catch |err| {
+        drainSelect(&select, allocator);
+        return err;
+    };
+    drainSelect(&select, allocator);
+
+    return switch (first) {
+        .fetch => |body| body,
+        .deadline => error.ConnectionTimedOut,
+    };
+}
+
 pub const InvimaClient = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     app_token: ?[]const u8,
     /// Heap-allocated so `*const InvimaClient` can still reuse its connection pool.
     http: ?*std.http.Client,
+    timeout_ms: u64,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, app_token: ?[]const u8) InvimaClient {
         const token_copy = if (app_token) |t| allocator.dupe(u8, t) catch null else null;
@@ -48,6 +102,7 @@ pub const InvimaClient = struct {
             .io = io,
             .app_token = token_copy,
             .http = http,
+            .timeout_ms = default_timeout_ms,
         };
     }
 
@@ -64,15 +119,25 @@ pub const InvimaClient = struct {
     fn get(self: *const InvimaClient, url: []const u8) ![]u8 {
         var attempt: usize = 0;
         while (true) {
-            return self.getOnce(url) catch |err| {
+            return self.getBounded(url) catch |err| {
                 attempt += 1;
                 if (attempt >= connect_attempts or !isTransient(err)) return err;
-                // A failed handshake can leave a poisoned pooled connection behind.
+                // A failed or timed-out handshake can leave a poisoned pooled connection behind.
                 self.resetPool();
                 self.io.sleep(.fromMilliseconds(retry_backoff_ms * @as(i64, @intCast(attempt))), .awake) catch {};
                 continue;
             };
         }
+    }
+
+    /// Runs one fetch against a deadline. `error.ConnectionTimedOut` (transient,
+    /// so `get` retries it) is returned if the deadline wins the race.
+    fn getBounded(self: *const InvimaClient, url: []const u8) ![]u8 {
+        return raceWithDeadline(self.io, self.allocator, self.timeout_ms, fetchErased, .{ self, url });
+    }
+
+    fn fetchErased(self: *const InvimaClient, url: []const u8) anyerror![]u8 {
+        return self.getOnce(url);
     }
 
     fn resetPool(self: *const InvimaClient) void {

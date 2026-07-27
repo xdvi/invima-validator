@@ -123,6 +123,17 @@ when present it is sent as the `X-App-Token` header. Supplying one is
 recommended to avoid throttling on datos.gov.co. Returns null on allocation
 failure.
 
+Each request runs against a 30-second deadline and retries a timed-out or
+transient connection up to three times, so a stalled upstream returns an error
+instead of blocking the caller forever. The deadline needs the multi-threaded
+build (the default); `zig build -Dsingle-threaded=true` produces a smaller
+library with no request timeout.
+
+A handle is **not** thread-safe. Never call two functions on the same handle
+from two threads at once — the retry path rebuilds the handle's connection pool,
+which would race an in-flight request. Use one handle per thread, or serialize
+access to a shared one.
+
 ```c
 void invima_client_free(InvimaClientHandle *handle);
 ```
