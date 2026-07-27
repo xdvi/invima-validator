@@ -9,17 +9,45 @@ const BASE_URL = "https://www.datos.gov.co/resource";
 const SUIT_DATASET_ID = "48fq-mxnm";
 const INVIMA_ENTITY = "INSTITUTO NACIONAL DE VIGILANCIA DE MEDICAMENTOS Y ALIMENTOS";
 
+/// Handshakes against the upstream load balancer fail intermittently and the
+/// standard library flattens the cause into `TlsInitializationFailed`.
+const connect_attempts = 3;
+const retry_backoff_ms = 250;
+
+/// Errors worth another attempt: the connection never carried a response, so
+/// retrying cannot duplicate a side effect. These reads are idempotent anyway.
+pub fn isTransient(err: anyerror) bool {
+    return switch (err) {
+        error.TlsInitializationFailed,
+        error.ConnectionRefused,
+        error.ConnectionResetByPeer,
+        error.ConnectionTimedOut,
+        error.TemporaryNameServerFailure,
+        error.NameServerFailure,
+        error.NetworkUnreachable,
+        error.HostLacksNetworkAddresses,
+        error.UnknownHostName,
+        => true,
+        else => false,
+    };
+}
+
 pub const InvimaClient = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     app_token: ?[]const u8,
+    /// Heap-allocated so `*const InvimaClient` can still reuse its connection pool.
+    http: ?*std.http.Client,
 
     pub fn init(allocator: std.mem.Allocator, io: std.Io, app_token: ?[]const u8) InvimaClient {
         const token_copy = if (app_token) |t| allocator.dupe(u8, t) catch null else null;
+        const http = allocator.create(std.http.Client) catch null;
+        if (http) |h| h.* = .{ .allocator = allocator, .io = io };
         return .{
             .allocator = allocator,
             .io = io,
             .app_token = token_copy,
+            .http = http,
         };
     }
 
@@ -27,11 +55,34 @@ pub const InvimaClient = struct {
         if (self.app_token) |token| {
             self.allocator.free(token);
         }
+        if (self.http) |h| {
+            h.deinit();
+            self.allocator.destroy(h);
+        }
     }
 
     fn get(self: *const InvimaClient, url: []const u8) ![]u8 {
-        var client = std.http.Client{ .allocator = self.allocator, .io = self.io };
-        defer client.deinit();
+        var attempt: usize = 0;
+        while (true) {
+            return self.getOnce(url) catch |err| {
+                attempt += 1;
+                if (attempt >= connect_attempts or !isTransient(err)) return err;
+                // A failed handshake can leave a poisoned pooled connection behind.
+                self.resetPool();
+                self.io.sleep(.fromMilliseconds(retry_backoff_ms * @as(i64, @intCast(attempt))), .awake) catch {};
+                continue;
+            };
+        }
+    }
+
+    fn resetPool(self: *const InvimaClient) void {
+        const h = self.http orelse return;
+        h.deinit();
+        h.* = .{ .allocator = self.allocator, .io = self.io };
+    }
+
+    fn getOnce(self: *const InvimaClient, url: []const u8) ![]u8 {
+        const client = self.http orelse return error.OutOfMemory;
 
         const uri = try std.Uri.parse(url);
 
