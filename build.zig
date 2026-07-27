@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const zon = @import("build.zig.zon");
 
 // Published releases must run on any cloud VM, not just the CPU that
 // happened to build them. `standardTargetOptions` resolves to the *native*
@@ -20,6 +21,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{ .default_target = default_target });
     const optimize = b.standardOptimizeOption(.{});
 
+    // Única fuente de verdad de la versión: `build.zig.zon`.
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "version", zon.version);
+    const build_options_mod = build_options.createModule();
+
     // 1. Crear el módulo para la biblioteca
     const lib_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
@@ -30,6 +36,7 @@ pub fn build(b: *std.Build) void {
         .single_threaded = true,
         .unwind_tables = .none,
     });
+    lib_mod.addImport("build_options", build_options_mod);
 
     // 2. Crear la biblioteca compartida (.so, .dll, .dylib) vinculando el módulo
     const lib = b.addLibrary(.{
@@ -48,6 +55,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    invima_mod.addImport("build_options", build_options_mod);
 
     const test_mod = b.createModule(.{
         .root_source_file = b.path("tests/root.zig"),
@@ -56,6 +64,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .imports = &.{.{ .name = "invima", .module = invima_mod }},
     });
+    test_mod.addImport("build_options", build_options_mod);
 
     const tests = b.addTest(.{ .root_module = test_mod });
     const run_tests = b.addRunArtifact(tests);

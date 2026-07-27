@@ -3,3 +3,5 @@ zig-out/
 examples/*.so
 examples/*.dylib
 examples/*.dll
+.atl/
+__pycache__/

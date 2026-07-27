@@ -174,93 +174,11 @@ pub const InvimaClient = struct {
         const body = try self.get(url);
         defer self.allocator.free(body);
 
-        const parsed = try std.json.parseFromSlice([]models.Medicine, self.allocator, body, .{
-            .ignore_unknown_fields = true,
-        });
-        defer parsed.deinit();
-
-        // Deep copy the parsed array so the caller owns it and we can free the parse tree
-        var list: std.ArrayList(models.Medicine) = .empty;
-        errdefer {
-            for (list.items) |item| {
-                self.freeMedicine(item);
-            }
-            list.deinit(self.allocator);
-        }
-
-        for (parsed.value) |m| {
-            var copy = models.Medicine{
-                .expediente = if (m.expediente) |v| try self.allocator.dupe(u8, v) else null,
-                .producto = if (m.producto) |v| try self.allocator.dupe(u8, v) else null,
-                .titular = if (m.titular) |v| try self.allocator.dupe(u8, v) else null,
-                .registrosanitario = if (m.registrosanitario) |v| try self.allocator.dupe(u8, v) else null,
-                .fechaexpedicion = if (m.fechaexpedicion) |v| try self.allocator.dupe(u8, v) else null,
-                .fechavencimiento = if (m.fechavencimiento) |v| try self.allocator.dupe(u8, v) else null,
-                .estadoregistro = if (m.estadoregistro) |v| try self.allocator.dupe(u8, v) else null,
-                .expedientecum = if (m.expedientecum) |v| try self.allocator.dupe(u8, v) else null,
-                .consecutivocum = if (m.consecutivocum) |v| try self.allocator.dupe(u8, v) else null,
-                .cantidadcum = if (m.cantidadcum) |v| try self.allocator.dupe(u8, v) else null,
-                .descripcioncomercial = if (m.descripcioncomercial) |v| try self.allocator.dupe(u8, v) else null,
-                .estadocum = if (m.estadocum) |v| try self.allocator.dupe(u8, v) else null,
-                .fechaactivo = if (m.fechaactivo) |v| try self.allocator.dupe(u8, v) else null,
-                .fechainactivo = if (m.fechainactivo) |v| try self.allocator.dupe(u8, v) else null,
-                .muestramedica = if (m.muestramedica) |v| try self.allocator.dupe(u8, v) else null,
-                .unidad = if (m.unidad) |v| try self.allocator.dupe(u8, v) else null,
-                .atc = if (m.atc) |v| try self.allocator.dupe(u8, v) else null,
-                .descripcionatc = if (m.descripcionatc) |v| try self.allocator.dupe(u8, v) else null,
-                .viaadministracion = if (m.viaadministracion) |v| try self.allocator.dupe(u8, v) else null,
-                .concentracion = if (m.concentracion) |v| try self.allocator.dupe(u8, v) else null,
-                .principioactivo = if (m.principioactivo) |v| try self.allocator.dupe(u8, v) else null,
-                .unidadmedida = if (m.unidadmedida) |v| try self.allocator.dupe(u8, v) else null,
-                .unidadreferencia = if (m.unidadreferencia) |v| try self.allocator.dupe(u8, v) else null,
-                .formafarmaceutica = if (m.formafarmaceutica) |v| try self.allocator.dupe(u8, v) else null,
-                .nombrerol = if (m.nombrerol) |v| try self.allocator.dupe(u8, v) else null,
-                .tiporol = if (m.tiporol) |v| try self.allocator.dupe(u8, v) else null,
-                .modalidad = if (m.modalidad) |v| try self.allocator.dupe(u8, v) else null,
-                .ium = if (m.ium) |v| try self.allocator.dupe(u8, v) else null,
-            };
-            if (m.cantidad) |val| {
-                copy.cantidad = try cloneJsonValue(self.allocator, val);
-            }
-            try list.append(self.allocator, copy);
-        }
-
-        return list.toOwnedSlice(self.allocator);
+        return parseMedicines(self.allocator, body);
     }
 
     pub fn freeMedicine(self: *const InvimaClient, m: models.Medicine) void {
-        if (m.expediente) |v| self.allocator.free(v);
-        if (m.producto) |v| self.allocator.free(v);
-        if (m.titular) |v| self.allocator.free(v);
-        if (m.registrosanitario) |v| self.allocator.free(v);
-        if (m.fechaexpedicion) |v| self.allocator.free(v);
-        if (m.fechavencimiento) |v| self.allocator.free(v);
-        if (m.estadoregistro) |v| self.allocator.free(v);
-        if (m.expedientecum) |v| self.allocator.free(v);
-        if (m.consecutivocum) |v| self.allocator.free(v);
-        if (m.cantidadcum) |v| self.allocator.free(v);
-        if (m.descripcioncomercial) |v| self.allocator.free(v);
-        if (m.estadocum) |v| self.allocator.free(v);
-        if (m.fechaactivo) |v| self.allocator.free(v);
-        if (m.fechainactivo) |v| self.allocator.free(v);
-        if (m.muestramedica) |v| self.allocator.free(v);
-        if (m.unidad) |v| self.allocator.free(v);
-        if (m.atc) |v| self.allocator.free(v);
-        if (m.descripcionatc) |v| self.allocator.free(v);
-        if (m.viaadministracion) |v| self.allocator.free(v);
-        if (m.concentracion) |v| self.allocator.free(v);
-        if (m.principioactivo) |v| self.allocator.free(v);
-        if (m.unidadmedida) |v| self.allocator.free(v);
-        if (m.unidadreferencia) |v| self.allocator.free(v);
-        if (m.formafarmaceutica) |v| self.allocator.free(v);
-        if (m.nombrerol) |v| self.allocator.free(v);
-        if (m.tiporol) |v| self.allocator.free(v);
-        if (m.modalidad) |v| self.allocator.free(v);
-        if (m.ium) |v| self.allocator.free(v);
-        if (m.cantidad) |v| {
-            // Free standard std.json.Value
-            freeJsonValue(self.allocator, v);
-        }
+        freeMedicineWith(self.allocator, m);
     }
 
     pub fn freeSuggestion(self: *const InvimaClient, s: models.MedicineSuggestion) void {
@@ -471,7 +389,7 @@ pub const InvimaClient = struct {
             const steps_slice = try list.toOwnedSlice(allocator);
             try map.put(key, steps_slice);
         }
-        
+
         temp_map.deinit();
 
         return map;
@@ -565,7 +483,7 @@ pub const InvimaClient = struct {
 
         for (rows) |row| {
             if (row != .object) continue;
-            
+
             const getStr = struct {
                 fn getStr(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
                     if (obj.get(key)) |val| {
@@ -698,7 +616,93 @@ pub const InvimaClient = struct {
     }
 };
 
-fn cleanValue(allocator: std.mem.Allocator, val: ?[]const u8) !?[]const u8 {
+/// Decodifica una respuesta Socrata; cada elemento se libera con `freeMedicineWith`.
+pub fn parseMedicines(allocator: std.mem.Allocator, body: []const u8) ![]models.Medicine {
+    const parsed = try std.json.parseFromSlice([]models.Medicine, allocator, body, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    var list: std.ArrayList(models.Medicine) = .empty;
+    errdefer {
+        for (list.items) |item| freeMedicineWith(allocator, item);
+        list.deinit(allocator);
+    }
+
+    for (parsed.value) |m| {
+        var copy = models.Medicine{
+            .expediente = if (m.expediente) |v| try allocator.dupe(u8, v) else null,
+            .producto = if (m.producto) |v| try allocator.dupe(u8, v) else null,
+            .titular = if (m.titular) |v| try allocator.dupe(u8, v) else null,
+            .registrosanitario = if (m.registrosanitario) |v| try allocator.dupe(u8, v) else null,
+            .fechaexpedicion = if (m.fechaexpedicion) |v| try allocator.dupe(u8, v) else null,
+            .fechavencimiento = if (m.fechavencimiento) |v| try allocator.dupe(u8, v) else null,
+            .estadoregistro = if (m.estadoregistro) |v| try allocator.dupe(u8, v) else null,
+            .expedientecum = if (m.expedientecum) |v| try allocator.dupe(u8, v) else null,
+            .consecutivocum = if (m.consecutivocum) |v| try allocator.dupe(u8, v) else null,
+            .cantidadcum = if (m.cantidadcum) |v| try allocator.dupe(u8, v) else null,
+            .descripcioncomercial = if (m.descripcioncomercial) |v| try allocator.dupe(u8, v) else null,
+            .estadocum = if (m.estadocum) |v| try allocator.dupe(u8, v) else null,
+            .fechaactivo = if (m.fechaactivo) |v| try allocator.dupe(u8, v) else null,
+            .fechainactivo = if (m.fechainactivo) |v| try allocator.dupe(u8, v) else null,
+            .muestramedica = if (m.muestramedica) |v| try allocator.dupe(u8, v) else null,
+            .unidad = if (m.unidad) |v| try allocator.dupe(u8, v) else null,
+            .atc = if (m.atc) |v| try allocator.dupe(u8, v) else null,
+            .descripcionatc = if (m.descripcionatc) |v| try allocator.dupe(u8, v) else null,
+            .viaadministracion = if (m.viaadministracion) |v| try allocator.dupe(u8, v) else null,
+            .concentracion = if (m.concentracion) |v| try allocator.dupe(u8, v) else null,
+            .principioactivo = if (m.principioactivo) |v| try allocator.dupe(u8, v) else null,
+            .unidadmedida = if (m.unidadmedida) |v| try allocator.dupe(u8, v) else null,
+            .unidadreferencia = if (m.unidadreferencia) |v| try allocator.dupe(u8, v) else null,
+            .formafarmaceutica = if (m.formafarmaceutica) |v| try allocator.dupe(u8, v) else null,
+            .nombrerol = if (m.nombrerol) |v| try allocator.dupe(u8, v) else null,
+            .tiporol = if (m.tiporol) |v| try allocator.dupe(u8, v) else null,
+            .modalidad = if (m.modalidad) |v| try allocator.dupe(u8, v) else null,
+            .ium = if (m.ium) |v| try allocator.dupe(u8, v) else null,
+        };
+        if (m.cantidad) |val| {
+            copy.cantidad = try cloneJsonValue(allocator, val);
+        }
+        errdefer freeMedicineWith(allocator, copy);
+        try list.append(allocator, copy);
+    }
+
+    return list.toOwnedSlice(allocator);
+}
+
+pub fn freeMedicineWith(allocator: std.mem.Allocator, m: models.Medicine) void {
+    if (m.expediente) |v| allocator.free(v);
+    if (m.producto) |v| allocator.free(v);
+    if (m.titular) |v| allocator.free(v);
+    if (m.registrosanitario) |v| allocator.free(v);
+    if (m.fechaexpedicion) |v| allocator.free(v);
+    if (m.fechavencimiento) |v| allocator.free(v);
+    if (m.estadoregistro) |v| allocator.free(v);
+    if (m.expedientecum) |v| allocator.free(v);
+    if (m.consecutivocum) |v| allocator.free(v);
+    if (m.cantidadcum) |v| allocator.free(v);
+    if (m.descripcioncomercial) |v| allocator.free(v);
+    if (m.estadocum) |v| allocator.free(v);
+    if (m.fechaactivo) |v| allocator.free(v);
+    if (m.fechainactivo) |v| allocator.free(v);
+    if (m.muestramedica) |v| allocator.free(v);
+    if (m.unidad) |v| allocator.free(v);
+    if (m.atc) |v| allocator.free(v);
+    if (m.descripcionatc) |v| allocator.free(v);
+    if (m.viaadministracion) |v| allocator.free(v);
+    if (m.concentracion) |v| allocator.free(v);
+    if (m.principioactivo) |v| allocator.free(v);
+    if (m.unidadmedida) |v| allocator.free(v);
+    if (m.unidadreferencia) |v| allocator.free(v);
+    if (m.formafarmaceutica) |v| allocator.free(v);
+    if (m.nombrerol) |v| allocator.free(v);
+    if (m.tiporol) |v| allocator.free(v);
+    if (m.modalidad) |v| allocator.free(v);
+    if (m.ium) |v| allocator.free(v);
+    if (m.cantidad) |v| freeJsonValue(allocator, v);
+}
+
+pub fn cleanValue(allocator: std.mem.Allocator, val: ?[]const u8) !?[]const u8 {
     const v = val orelse return null;
     const trimmed = std.mem.trim(u8, v, " \t\r\n");
     if (trimmed.len == 0 or std.ascii.eqlIgnoreCase(trimmed, "null")) {
@@ -707,7 +711,7 @@ fn cleanValue(allocator: std.mem.Allocator, val: ?[]const u8) !?[]const u8 {
     return try allocator.dupe(u8, trimmed);
 }
 
-fn formatDate(allocator: std.mem.Allocator, val: ?[]const u8) !?[]const u8 {
+pub fn formatDate(allocator: std.mem.Allocator, val: ?[]const u8) !?[]const u8 {
     const cleaned = try cleanValue(allocator, val) orelse return null;
     errdefer allocator.free(cleaned);
     if (cleaned.len >= 10) {
@@ -723,7 +727,7 @@ fn formatDate(allocator: std.mem.Allocator, val: ?[]const u8) !?[]const u8 {
 fn normalizeText(allocator: std.mem.Allocator, value: []const u8) ![]const u8 {
     var output: std.ArrayList(u8) = .empty;
     errdefer output.deinit(allocator);
-    
+
     var i: usize = 0;
     while (i < value.len) {
         const codepoint_len = std.unicode.utf8ByteSequenceLength(value[i]) catch 1;
@@ -808,10 +812,10 @@ fn categoryKeywords(categoria: []const u8) ?[]const []const u8 {
     return null;
 }
 
-fn detectCategories(allocator: std.mem.Allocator, nombre_tramite: ?[]const u8, nombre_comun: ?[]const u8, proposito: ?[]const u8) ![][]const u8 {
+pub fn detectCategories(allocator: std.mem.Allocator, nombre_tramite: ?[]const u8, nombre_comun: ?[]const u8, proposito: ?[]const u8) ![][]const u8 {
     var combined: std.ArrayList(u8) = .empty;
     defer combined.deinit(allocator);
-    
+
     if (nombre_tramite) |n| {
         const norm = try normalizeText(allocator, n);
         defer allocator.free(norm);
@@ -830,13 +834,13 @@ fn detectCategories(allocator: std.mem.Allocator, nombre_tramite: ?[]const u8, n
         try combined.appendSlice(allocator, norm);
         try combined.append(allocator, ' ');
     }
-    
+
     var list = std.ArrayList([]const u8).empty;
     errdefer {
         for (list.items) |item| allocator.free(item);
         list.deinit(allocator);
     }
-    
+
     const categories = [_]struct { key: []const u8, label: []const u8 }{
         .{ .key = "medicamentos", .label = "Medicamentos" },
         .{ .key = "alimentos", .label = "Alimentos" },
@@ -844,7 +848,7 @@ fn detectCategories(allocator: std.mem.Allocator, nombre_tramite: ?[]const u8, n
         .{ .key = "dispositivos_medicos", .label = "Dispositivos médicos" },
         .{ .key = "certificaciones", .label = "Certificaciones o inspecciones" },
     };
-    
+
     for (categories) |cat| {
         if (categoryKeywords(cat.key)) |keywords| {
             var match = false;
@@ -870,35 +874,32 @@ fn buildSuitWhereClause(allocator: std.mem.Allocator, texto: ?[]const u8) ![]con
         for (clauses.items) |c| allocator.free(c);
         clauses.deinit(allocator);
     }
-    
+
     const invima_escaped = try soql.escapeSqlString(allocator, "INSTITUTO NACIONAL DE VIGILANCIA DE MEDICAMENTOS Y ALIMENTOS - INVIMA");
     errdefer allocator.free(invima_escaped);
-    
+
     const base_clause = try std.fmt.allocPrint(allocator, "nombre_de_la_entidad = '{s}'", .{invima_escaped});
     allocator.free(invima_escaped);
     try clauses.append(allocator, base_clause);
-    
+
     if (texto) |t| {
         const trimmed = std.mem.trim(u8, t, " \t\r\n");
         if (trimmed.len > 0) {
             const sanitized = try soql.escapeSqlString(allocator, trimmed);
             defer allocator.free(sanitized);
-            
+
             const upper_sanitized = try allocator.alloc(u8, sanitized.len);
             defer allocator.free(upper_sanitized);
             _ = std.ascii.upperString(upper_sanitized, sanitized);
-            
-            const text_clause = try std.fmt.allocPrint(allocator,
-                "(upper(nombre_del_tr_mite_u_otro) like '%{0s}%' OR upper(nombre_com_n) like '%{0s}%' OR upper(prop_sito_del_tr_mite_u_otro) like '%{0s}%' OR upper(nombre_resultado) like '%{0s}%')",
-                .{upper_sanitized}
-            );
+
+            const text_clause = try std.fmt.allocPrint(allocator, "(upper(nombre_del_tr_mite_u_otro) like '%{0s}%' OR upper(nombre_com_n) like '%{0s}%' OR upper(prop_sito_del_tr_mite_u_otro) like '%{0s}%' OR upper(nombre_resultado) like '%{0s}%')", .{upper_sanitized});
             try clauses.append(allocator, text_clause);
         }
     }
-    
+
     var output = std.ArrayList(u8).empty;
     errdefer output.deinit(allocator);
-    
+
     for (clauses.items, 0..) |clause, idx| {
         if (idx > 0) {
             try output.appendSlice(allocator, " AND ");
@@ -906,7 +907,7 @@ fn buildSuitWhereClause(allocator: std.mem.Allocator, texto: ?[]const u8) ![]con
         try output.appendSlice(allocator, clause);
         allocator.free(clause);
     }
-    
+
     return output.toOwnedSlice(allocator);
 }
 

@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main, master ]
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,28 +21,53 @@ jobs:
         with:
           version: 0.16.0
 
+      - name: Check formatting
+        run: zig fmt --check .
+
+      # Distro package, not PyPI: the runner's python is externally managed
+      # (PEP 668), so a plain `pip install` aborts.
+      - name: Lint workflows
+        run: |
+          python3 -c "import yaml" 2>/dev/null || (sudo apt-get update && sudo apt-get install -y python3-yaml)
+          python3 scripts/lint_workflows.py --self-test
+          python3 scripts/lint_workflows.py
+
       - name: Run Unit Tests
         run: zig build test
-
-      - name: Run Demo
-        run: |
-          zig build
-          cp zig-out/lib/libinvima_ffi.so examples/
-          python examples/demo.py
 
       - name: Build Release (with UPX)
         run: |
           sudo apt-get update && sudo apt-get install -y upx-ucl
           ./scripts/build.sh --release --upx
 
-      # Regression guard for the class of bug fixed in build.zig: CI runners
-      # may have a newer CPU (VAES/AVX-512) than real deployment targets
-      # (e.g. Cascade Lake Xeons), so a binary that merely runs *here* proves
-      # nothing about portability. QEMU user-mode emulates an older baseline
-      # CPU on the same host arch — an illegal instruction shows up as a
-      # SIGILL here instead of in production.
+      # Emulates an older baseline CPU: an instruction the runner supports but
+      # deployment hosts lack (e.g. VAES) surfaces as SIGILL here, not in prod.
+      # Offline only: the networked demo once hung for 16 minutes under
+      # emulation, and InvimaClient.get() has no timeout to bound it.
       - name: Smoke test under baseline-CPU emulation (Nehalem, no AVX)
+        timeout-minutes: 5
         run: |
           sudo apt-get install -y qemu-user
           cp zig-out/lib/libinvima_ffi.so examples/
-          qemu-x86_64 -cpu Nehalem "$(command -v python3)" examples/demo.py
+          qemu-x86_64 -cpu Nehalem "$(command -v python3)" examples/demo.py --offline
+
+  # Non-blocking: asserts real datos.gov.co behavior. Outages are reported here
+  # instead of blocking merges.
+  live-demo:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Run demo against datos.gov.co
+        run: |
+          zig build
+          cp zig-out/lib/libinvima_ffi.so examples/
+          python3 examples/demo.py
