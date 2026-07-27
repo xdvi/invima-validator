@@ -37,6 +37,16 @@ Requires Zig 0.16.0.
 ```sh
 zig build            # builds into zig-out/lib
 zig build test       # unit tests
+zig fmt --check .    # formatting, as CI runs it
+```
+
+CI also lints the workflows. It rejects any `${{ }}` expression inside a `run:`
+body, because Actions substitutes those as raw shell text before the shell parses
+the script; values belong in `env:` instead. Run it locally with:
+
+```sh
+python3 scripts/lint_workflows.py             # needs PyYAML (apt: python3-yaml)
+python3 scripts/lint_workflows.py --self-test # checks the detector itself
 ```
 
 Size-optimized artifact (ReleaseSmall, stripped ELF sections, optional UPX
