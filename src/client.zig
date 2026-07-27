@@ -35,6 +35,56 @@ pub fn isTransient(err: anyerror) bool {
     };
 }
 
+fn deadlineArm(io: std.Io, ms: u64) void {
+    io.sleep(.fromMilliseconds(std.math.lossyCast(i64, ms)), .awake) catch {};
+}
+
+/// Cancels the losing arm and frees a body that completed in a race with the deadline.
+fn drainSelect(select: anytype, allocator: std.mem.Allocator) void {
+    while (select.cancel()) |leftover| {
+        switch (leftover) {
+            .fetch => |body| if (body) |slice| allocator.free(slice) else |_| {},
+            .deadline => {},
+        }
+    }
+}
+
+/// Runs `work(args)` against a deadline. Returns `error.ConnectionTimedOut` if the
+/// deadline wins; the work's body, if it completes in the race, is freed by the drain.
+/// Falls back to running `work` unbounded if concurrency is unavailable.
+pub fn raceWithDeadline(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    timeout_ms: u64,
+    comptime work: anytype,
+    args: anytype,
+) anyerror![]u8 {
+    const Outcome = union(enum) { fetch: anyerror![]u8, deadline: void };
+    var slots: [2]Outcome = undefined;
+    var select = std.Io.Select(Outcome).init(io, &slots);
+
+    // The deadline is armed first: without it there is no bound, so fall back to
+    // a plain call rather than run the fetch arm with nothing to cut it.
+    select.concurrent(.deadline, deadlineArm, .{ io, timeout_ms }) catch {
+        return @call(.auto, work, args);
+    };
+    select.concurrent(.fetch, work, args) catch {
+        drainSelect(&select, allocator);
+        return @call(.auto, work, args);
+    };
+
+    const first = select.await() catch |err| {
+        drainSelect(&select, allocator);
+        return err;
+    };
+    drainSelect(&select, allocator);
+
+    return switch (first) {
+        .fetch => |body| body,
+        .deadline => error.ConnectionTimedOut,
+    };
+}
+
 pub const InvimaClient = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -83,46 +133,11 @@ pub const InvimaClient = struct {
     /// Runs one fetch against a deadline. `error.ConnectionTimedOut` (transient,
     /// so `get` retries it) is returned if the deadline wins the race.
     fn getBounded(self: *const InvimaClient, url: []const u8) ![]u8 {
-        const io = self.io;
-        const Outcome = union(enum) { fetch: anyerror![]u8, deadline: void };
-        var slots: [2]Outcome = undefined;
-        var select = std.Io.Select(Outcome).init(io, &slots);
-
-        select.concurrent(.fetch, fetchErased, .{ self, url }) catch {
-            // No concurrency available (e.g. single-threaded build): fetch unbounded.
-            return self.getOnce(url);
-        };
-        // If the deadline cannot be scheduled, still await the fetch rather than fail.
-        select.concurrent(.deadline, deadlineArm, .{ io, self.timeout_ms }) catch {};
-
-        const first = select.await() catch |err| {
-            self.drain(&select);
-            return err;
-        };
-        self.drain(&select);
-
-        return switch (first) {
-            .fetch => |body| body,
-            .deadline => error.ConnectionTimedOut,
-        };
-    }
-
-    /// Cancels the losing arm and frees a body that completed in a race with the deadline.
-    fn drain(self: *const InvimaClient, select: anytype) void {
-        while (select.cancel()) |leftover| {
-            switch (leftover) {
-                .fetch => |body| if (body) |slice| self.allocator.free(slice) else |_| {},
-                .deadline => {},
-            }
-        }
+        return raceWithDeadline(self.io, self.allocator, self.timeout_ms, fetchErased, .{ self, url });
     }
 
     fn fetchErased(self: *const InvimaClient, url: []const u8) anyerror![]u8 {
         return self.getOnce(url);
-    }
-
-    fn deadlineArm(io: std.Io, ms: u64) void {
-        io.sleep(.fromMilliseconds(std.math.lossyCast(i64, ms)), .awake) catch {};
     }
 
     fn resetPool(self: *const InvimaClient) void {

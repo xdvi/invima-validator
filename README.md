@@ -129,6 +129,11 @@ instead of blocking the caller forever. The deadline needs the multi-threaded
 build (the default); `zig build -Dsingle-threaded=true` produces a smaller
 library with no request timeout.
 
+A handle is **not** thread-safe. Never call two functions on the same handle
+from two threads at once — the retry path rebuilds the handle's connection pool,
+which would race an in-flight request. Use one handle per thread, or serialize
+access to a shared one.
+
 ```c
 void invima_client_free(InvimaClientHandle *handle);
 ```
