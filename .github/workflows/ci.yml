@@ -42,8 +42,8 @@ jobs:
 
       # Emulates an older baseline CPU: an instruction the runner supports but
       # deployment hosts lack (e.g. VAES) surfaces as SIGILL here, not in prod.
-      # Offline only — under qemu-user the TLS handshake never initializes, so
-      # the HTTP path cannot be covered here. It runs natively in live-demo.
+      # Offline only: the networked demo once hung for 16 minutes under
+      # emulation, and InvimaClient.get() has no timeout to bound it.
       - name: Smoke test under baseline-CPU emulation (Nehalem, no AVX)
         timeout-minutes: 5
         run: |
